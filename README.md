@@ -6,8 +6,8 @@ Backend assignment implementation for Undo School using Java Spring Boot and MyS
 
 This service supports two user roles:
 
-- **Teacher** can create an offering (batch) for a course and add session schedules.
-- **Parent/Student** can view offerings in their own timezone, book an offering, and view their bookings.
+- **Teacher** creates offerings and adds class sessions.
+- **Parent/Student** views offerings in local timezone, books an offering, and views bookings.
 
 Booking is done at **offering level** (all sessions together), not per session.
 
@@ -21,39 +21,24 @@ Booking is done at **offering level** (all sessions together), not per session.
 - Spring Data JPA (Hibernate)
 - Flyway
 - MySQL
-- Swagger / OpenAPI (`springdoc-openapi`)
-
----
-
-## Project structure
-
-- `controller` -> REST APIs
-- `service` -> business logic (timezone conversion, conflict checks, booking flow)
-- `repository` -> JPA repositories
-- `entity` -> DB entities
-- `dto` -> API request/response objects
-- `exception` -> centralized error handling
-- `src/main/resources/db/migration` -> Flyway SQL migrations
+- Swagger UI
 
 ---
 
 ## Local setup
 
 ### 1) Prerequisites
-
 - Java 21+
 - Maven 3.9+
 - MySQL running locally
 
 ### 2) Create database
-
 ```sql
 CREATE DATABASE undo_booking;
 ```
 
-### 3) Configure environment variables (optional)
-
-If you skip these, defaults from `application.yml` are used.
+### 3) Configure env vars (optional)
+Defaults are in `application.yml`.
 
 - `DB_URL` (default: `jdbc:mysql://localhost:3306/undo_booking?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC`)
 - `DB_USERNAME` (default: `root`)
@@ -61,54 +46,50 @@ If you skip these, defaults from `application.yml` are used.
 - `PORT` (default: `8080`)
 
 Example:
-
 ```bash
 export DB_URL="jdbc:mysql://localhost:3306/undo_booking?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=UTC"
 export DB_USERNAME="root"
 export DB_PASSWORD=""
 ```
 
-### 4) Run application
-
+### 4) Run app
 ```bash
 mvn spring-boot:run
 ```
-
-Flyway migration runs automatically on startup.
 
 ---
 
 ## API documentation
 
-- **Without running the project (recommended for reviewers):**
-  - `openapi.json` (repo root)
-  - `openapi.yaml` (repo root)
-- **When running locally:**
-  - Swagger UI: `http://localhost:8080/swagger-ui.html`
-  - OpenAPI JSON endpoint: `http://localhost:8080/v3/api-docs`
+- Swagger UI: `http://localhost:8080/swagger-ui.html`
+- OpenAPI endpoint: `http://localhost:8080/v3/api-docs`
+
+All endpoint details are documented below as well.
 
 ---
 
-## APIs
+## Data model
 
-### Teacher APIs
+- `courses` -> course metadata (e.g., Minecraft Coding)
+- `offerings` -> schedulable batch/section under course
+- `sessions` -> actual class times for each offering (stored in UTC)
+- `parents` -> parent identity
+- `bookings` -> parent booked offering relation
 
-- `POST /api/teacher/offerings` -> create offering
-- `POST /api/teacher/offerings/{offeringId}/sessions` -> add sessions to offering
-- `GET /api/teacher/{teacherId}/offerings?timezone=UTC` -> list teacher offerings
-
-### Parent APIs
-
-- `GET /api/parent/offerings?timezone=UTC` -> list available offerings
-- `POST /api/parent/bookings?timezone=UTC` -> book offering
-- `GET /api/parent/{parentId}/bookings?timezone=UTC` -> list parent bookings
+API IDs use standard UUID string format.
 
 ---
 
-## Example payloads
+## API contract (complete)
 
-### Create offering
+## Teacher APIs
 
+### 1) Create offering
+**Endpoint**: `POST /api/teacher/offerings`
+
+**What it does**: Creates a new offering under a course for a teacher.
+
+**Request body**
 ```json
 {
   "courseTitle": "Minecraft Coding",
@@ -118,8 +99,29 @@ Flyway migration runs automatically on startup.
 }
 ```
 
-### Add sessions
+**Success response (200)**
+```json
+{
+  "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+  "courseTitle": "Minecraft Coding",
+  "offeringName": "Saturday Batch",
+  "teacherId": "11111111-1111-1111-1111-111111111111",
+  "teacherTimezone": "America/New_York",
+  "sessions": []
+}
+```
 
+---
+
+### 2) Add sessions to offering
+**Endpoint**: `POST /api/teacher/offerings/{offeringId}/sessions`
+
+**What it does**: Adds one or more sessions to an existing offering.
+
+**Path params**
+- `offeringId` (UUID)
+
+**Request body**
 ```json
 [
   {
@@ -133,75 +135,216 @@ Flyway migration runs automatically on startup.
 ]
 ```
 
-### Book offering
-
+**Success response (200)**
 ```json
 {
-  "parentId": "22222222-2222-2222-2222-222222222222",
-  "offeringId": "<offering-id>"
+  "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+  "courseTitle": "Minecraft Coding",
+  "offeringName": "Saturday Batch",
+  "teacherId": "11111111-1111-1111-1111-111111111111",
+  "teacherTimezone": "America/New_York",
+  "sessions": [
+    {
+      "sessionId": "9fe50fcd-b34e-44cc-8b9b-61c791489857",
+      "startAt": "2026-06-06T18:00:00-04:00",
+      "endAt": "2026-06-06T19:00:00-04:00"
+    }
+  ]
 }
 ```
 
 ---
 
-## Database tables
+### 3) Get teacher offerings
+**Endpoint**: `GET /api/teacher/{teacherId}/offerings?timezone=UTC`
 
-- `courses` -> course names/titles
-- `offerings` -> course offerings with teacher and timezone
-- `sessions` -> offering sessions stored in UTC
-- `parents` -> parent identity mapping
-- `bookings` -> parent to offering bookings
+**What it does**: Returns offerings of a teacher; session times are converted to requested timezone.
 
-IDs are exposed as standard 36-character UUID strings in API contracts.
+**Path params**
+- `teacherId` (UUID)
+
+**Query params**
+- `timezone` (optional, default `UTC`)
+
+**Success response (200)**
+```json
+[
+  {
+    "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+    "courseTitle": "Minecraft Coding",
+    "offeringName": "Saturday Batch",
+    "teacherId": "11111111-1111-1111-1111-111111111111",
+    "teacherTimezone": "America/New_York",
+    "sessions": [
+      {
+        "sessionId": "9fe50fcd-b34e-44cc-8b9b-61c791489857",
+        "startAt": "2026-06-06T22:00:00Z",
+        "endAt": "2026-06-06T23:00:00Z"
+      }
+    ]
+  }
+]
+```
 
 ---
 
-## Core implementation decisions
+## Parent APIs
+
+### 4) Get available offerings
+**Endpoint**: `GET /api/parent/offerings?timezone=UTC`
+
+**What it does**: Returns all available offerings with sessions converted to requested timezone.
+
+**Query params**
+- `timezone` (optional, default `UTC`)
+
+**Success response (200)**
+```json
+[
+  {
+    "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+    "courseTitle": "Minecraft Coding",
+    "offeringName": "Saturday Batch",
+    "teacherId": "11111111-1111-1111-1111-111111111111",
+    "teacherTimezone": "America/New_York",
+    "sessions": [
+      {
+        "sessionId": "9fe50fcd-b34e-44cc-8b9b-61c791489857",
+        "startAt": "2026-06-06T22:00:00Z",
+        "endAt": "2026-06-06T23:00:00Z"
+      }
+    ]
+  }
+]
+```
+
+---
+
+### 5) Book offering
+**Endpoint**: `POST /api/parent/bookings?timezone=Asia/Kolkata`
+
+**What it does**: Books complete offering for parent (all sessions).
+
+**Query params**
+- `timezone` (optional, default `UTC`)
+
+**Request body**
+```json
+{
+  "parentId": "22222222-2222-2222-2222-222222222222",
+  "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b"
+}
+```
+
+**Success response (200)**
+```json
+{
+  "bookingId": "15eb3d20-b616-4c28-ad58-6a047155ef9e",
+  "parentId": "22222222-2222-2222-2222-222222222222",
+  "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+  "courseTitle": "Minecraft Coding",
+  "offeringName": "Saturday Batch",
+  "bookedAt": "2026-05-28T16:26:34.862384+05:30",
+  "sessions": [
+    {
+      "sessionId": "9fe50fcd-b34e-44cc-8b9b-61c791489857",
+      "startAt": "2026-06-07T03:30:00+05:30",
+      "endAt": "2026-06-07T04:30:00+05:30"
+    }
+  ]
+}
+```
+
+---
+
+### 6) Get parent bookings
+**Endpoint**: `GET /api/parent/{parentId}/bookings?timezone=UTC`
+
+**What it does**: Returns all offerings booked by a parent.
+
+**Path params**
+- `parentId` (UUID)
+
+**Query params**
+- `timezone` (optional, default `UTC`)
+
+**Success response (200)**
+```json
+[
+  {
+    "bookingId": "15eb3d20-b616-4c28-ad58-6a047155ef9e",
+    "parentId": "22222222-2222-2222-2222-222222222222",
+    "offeringId": "8141d4c7-cec3-4f8f-baca-6de0a190779b",
+    "courseTitle": "Minecraft Coding",
+    "offeringName": "Saturday Batch",
+    "bookedAt": "2026-05-28T10:56:34.862384Z",
+    "sessions": [
+      {
+        "sessionId": "9fe50fcd-b34e-44cc-8b9b-61c791489857",
+        "startAt": "2026-06-06T22:00:00Z",
+        "endAt": "2026-06-06T23:00:00Z"
+      }
+    ]
+  }
+]
+```
+
+---
+
+## Error responses
+
+### Validation error (400)
+```json
+{
+  "message": "courseTitle must not be blank",
+  "timestamp": "2026-05-28T11:30:00Z"
+}
+```
+
+### Not found (404)
+```json
+{
+  "message": "Offering not found: <offering-id>",
+  "timestamp": "2026-05-28T11:31:00Z"
+}
+```
+
+### Duplicate booking (409)
+```json
+{
+  "message": "Offering already booked by this parent",
+  "timestamp": "2026-05-28T11:25:00Z"
+}
+```
+
+### Overlap conflict (409)
+```json
+{
+  "message": "Booking conflicts with an already booked offering session",
+  "timestamp": "2026-05-28T11:20:00Z"
+}
+```
+
+---
+
+## Key implementation points
 
 ### Timezone handling
+- Teacher sends session time in teacher timezone.
+- Service converts and stores as UTC.
+- Read APIs convert UTC to requested timezone.
 
-- Teacher sends local datetime + teacher timezone.
-- Datetime is converted to UTC before saving.
-- All read APIs convert UTC times into requested `timezone` query param.
-
-### Conflict detection
-
-A booking is rejected if **any session** of candidate offering overlaps with already booked sessions for the same parent.
-
-Overlap condition:
-
-`existing.start < candidate.end && existing.end > candidate.start`
+### Conflict handling
+- Parent cannot book offerings with overlapping session windows.
+- Overlap logic: `existing.start < candidate.end && existing.end > candidate.start`
 
 ### Concurrency handling
-
-Booking flow is transactional and locks the parent row with pessimistic write lock before checking conflicts.
-
-This prevents race conditions when multiple requests for the same parent happen at the same time.
-
-Also, duplicate booking of same offering is blocked by DB unique constraint on `(parent_id, offering_id)`.
+- Booking transaction uses pessimistic lock on parent row.
+- Prevents race conditions for parallel requests.
+- DB unique constraint blocks same parent booking same offering twice.
 
 ---
 
-## Common errors
+## Demo flow
 
-- `400 Bad Request` -> validation issue / invalid timezone / invalid session range
-- `404 Not Found` -> offering not found
-- `409 Conflict` -> duplicate booking or overlapping booking
-
----
-
-## Demo script
-
-Use `API_DEMO_DATA.md` for recording-ready, step-by-step request flow including:
-
-- normal teacher + parent flow
-- duplicate booking check (`409`)
-- overlap conflict check (`409`)
-
----
-
-## Notes / assumptions
-
-- No seat-capacity constraint is implemented (not part of assignment requirements).
-- Parent books full offering, not individual sessions.
-- Session overlap inside same offering is not allowed.
+For quick recording with exact sequence, use: `API_DEMO_DATA.md`.
